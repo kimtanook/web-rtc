@@ -1,10 +1,11 @@
 "use client";
 
 import {roomValueState} from "@/utils/atom";
-import {useEffect, useRef, useState} from "react";
+import {ChangeEvent, FormEvent, useEffect, useRef, useState} from "react";
 import {useRecoilState} from "recoil";
 import {connect} from "socket.io-client";
-import CallMedia from "./CallMedia";
+import styled from "styled-components";
+import {v4 as uuidv4} from "uuid";
 import DownloadMedia from "./DownloadMedia";
 
 function MediaWrap() {
@@ -14,10 +15,28 @@ function MediaWrap() {
   const mediaRef = useRef<HTMLVideoElement>(null);
   const otherMediaRef = useRef<HTMLVideoElement>(null);
 
+  const [isJoin, setIsJoin] = useState(false);
   const [roomName, setRoomName] = useRecoilState(roomValueState);
   const [videoInput, setVideoInput] = useState<MediaDeviceInfo[]>([]);
 
+  const [onMute, setOnMute] = useState(false);
+  const [onVideo, setOnVideo] = useState(false);
+
   const socket = connect("localhost:4000");
+
+  const onChangeRoomName = (e: ChangeEvent<HTMLInputElement>) => {
+    setRoomName(e.currentTarget.value);
+  };
+
+  const onSubmitRoom = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!roomName) {
+      return alert("방 이름을 입력해주세요.");
+    }
+    setIsJoin(true);
+    socket?.emit("join_room", roomName);
+    await getMedia("");
+  };
 
   // 카메가 정보 가져오기
   const getCamera = async () => {
@@ -60,6 +79,66 @@ function MediaWrap() {
     }
   };
 
+  const muteClick = () => {
+    if (mediaRef.current) {
+      const audioTracks = mediaRef.current.srcObject as MediaStream;
+      audioTracks.getAudioTracks().forEach((track: MediaStreamTrack) => {
+        track.enabled = !track.enabled;
+      });
+      setOnMute(!onMute);
+    }
+  };
+
+  const videoClick = () => {
+    if (mediaRef.current) {
+      const videoTracks = mediaRef.current.srcObject as MediaStream;
+      videoTracks.getVideoTracks().forEach((track: MediaStreamTrack) => {
+        track.enabled = !track.enabled;
+      });
+      setOnVideo(!onVideo);
+    }
+  };
+
+  const changeCamera = (e: ChangeEvent<HTMLSelectElement>) => {
+    const value = e.target.value;
+    getMedia(value);
+  };
+
+  // RTC 코드 START
+  const makeConnection = async () => {
+    myPeerConnection = new RTCPeerConnection({
+      iceServers: [
+        {
+          urls: ["stun:stun.l.google.com:19302"],
+        },
+      ],
+    });
+    myPeerConnection.addEventListener("icecandidate", handleIce);
+    myPeerConnection.addEventListener("addstream", handleAddStream);
+
+    if (myStream) {
+      myStream.getTracks().forEach((track) => {
+        if (myPeerConnection) {
+          myPeerConnection.addTrack(track, myStream);
+        }
+      });
+    }
+  };
+
+  const handleIce = (event: RTCPeerConnectionIceEvent) => {
+    if (event.candidate) {
+      socket.emit("ice", event.candidate, roomName);
+    }
+  };
+
+  const handleAddStream = (event: any) => {
+    if (otherMediaRef?.current) {
+      otherMediaRef.current.srcObject = event.stream;
+    }
+  };
+  // RTC 코드 END
+
+  // socket 코드 START
   useEffect(() => {
     // 누군가 내가 있는 방에 들어올 때의 이벤트
     socket.on("welcome", async () => {
@@ -104,53 +183,58 @@ function MediaWrap() {
       socket.off("ice");
     };
   }, [roomName]);
-
-  const makeConnection = async () => {
-    myPeerConnection = new RTCPeerConnection({
-      iceServers: [
-        {
-          urls: ["stun:stun.l.google.com:19302"],
-        },
-      ],
-    });
-    myPeerConnection.addEventListener("icecandidate", handleIce);
-    myPeerConnection.addEventListener("addstream", handleAddStream);
-
-    if (myStream) {
-      myStream.getTracks().forEach((track) => {
-        if (myPeerConnection) {
-          myPeerConnection.addTrack(track, myStream);
-        }
-      });
-    }
-  };
-
-  const handleIce = (event: RTCPeerConnectionIceEvent) => {
-    if (event.candidate) {
-      socket.emit("ice", event.candidate, roomName);
-    }
-  };
-
-  const handleAddStream = (event: any) => {
-    if (otherMediaRef?.current) {
-      otherMediaRef.current.srcObject = event.stream;
-    }
-  };
+  // socket 코드 END
 
   return (
-    <div>
-      <CallMedia
-        mediaRef={mediaRef}
-        otherMediaRef={otherMediaRef}
-        socket={socket}
-        roomName={roomName}
-        setRoomName={setRoomName}
-        videoInput={videoInput}
-        getMedia={getMedia}
-      />
-      <DownloadMedia mediaRef={mediaRef} />
-    </div>
+    <Wrap>
+      {!isJoin ? (
+        <FormWrap>
+          <form onSubmit={onSubmitRoom}>
+            <input value={roomName} onChange={onChangeRoomName} />
+          </form>
+          <button>입장</button>
+        </FormWrap>
+      ) : (
+        <div>
+          <div>
+            <div>{roomName}</div>
+            <div>
+              <video ref={mediaRef} autoPlay playsInline />
+              <video ref={otherMediaRef} autoPlay playsInline />
+            </div>
+            <div>
+              <button onClick={muteClick}>{onMute ? "Unmute" : "Mute"}</button>
+              <button onClick={videoClick}>
+                {onVideo ? "Stop Video" : "Start Video"}
+              </button>
+            </div>
+            <select onChange={changeCamera}>
+              <option value="">Default Camera</option>
+              {videoInput.map((item: any) => (
+                <option key={uuidv4()} value={item.deviceId}>
+                  {item.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          <DownloadMedia mediaRef={mediaRef} />
+        </div>
+      )}
+    </Wrap>
   );
 }
 
 export default MediaWrap;
+
+const Wrap = styled.div`
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  height: 100vh;
+`;
+
+const FormWrap = styled.div`
+  display: flex;
+  flex-direction: row;
+`;

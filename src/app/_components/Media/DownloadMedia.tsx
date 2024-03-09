@@ -1,4 +1,5 @@
 import {useState} from "react";
+import styled from "styled-components";
 
 function DownloadMedia({mediaRef}: any) {
   const [recording, setRecording] = useState(false);
@@ -37,14 +38,18 @@ function DownloadMedia({mediaRef}: any) {
     }
   };
   return (
-    <div>
+    <Wrap>
       {recording ? (
         <button onClick={stopRecording}>Stop Recording</button>
       ) : (
         <button onClick={startRecording}>Start Recording</button>
       )}
-    </div>
+    </Wrap>
   );
 }
 
 export default DownloadMedia;
+
+const Wrap = styled.div`
+  border: 1px solid green;
+`;
