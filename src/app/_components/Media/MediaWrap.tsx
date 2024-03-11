@@ -9,11 +9,14 @@ import {v4 as uuidv4} from "uuid";
 import DownloadMedia from "./DownloadMedia";
 
 function MediaWrap() {
-  let myPeerConnection: RTCPeerConnection | null = null;
+  let myPeerConnection: RTCPeerConnection;
   let myStream: MediaStream;
+  let myDataChannel;
 
   const mediaRef = useRef<HTMLVideoElement>(null);
   const otherMediaRef = useRef<HTMLVideoElement>(null);
+
+  const [isOtherMedia, setIsOtherMedia] = useState(false);
 
   const [isJoin, setIsJoin] = useState(false);
   const [roomName, setRoomName] = useRecoilState(roomValueState);
@@ -34,8 +37,9 @@ function MediaWrap() {
       return alert("방 이름을 입력해주세요.");
     }
     setIsJoin(true);
-    socket?.emit("join_room", roomName);
     await getMedia("");
+    makeConnection();
+    socket?.emit("join_room", roomName);
   };
 
   // 카메가 정보 가져오기
@@ -113,16 +117,14 @@ function MediaWrap() {
         },
       ],
     });
-    myPeerConnection.addEventListener("icecandidate", handleIce);
-    myPeerConnection.addEventListener("addstream", handleAddStream);
+    myPeerConnection?.addEventListener("icecandidate", handleIce);
+    myPeerConnection?.addEventListener("addstream", handleAddStream);
 
-    if (myStream) {
-      myStream.getTracks().forEach((track) => {
-        if (myPeerConnection) {
-          myPeerConnection.addTrack(track, myStream);
-        }
-      });
-    }
+    myStream.getTracks().forEach((track) => {
+      if (myPeerConnection) {
+        myPeerConnection.addTrack(track, myStream);
+      }
+    });
   };
 
   const handleIce = (event: RTCPeerConnectionIceEvent) => {
@@ -140,40 +142,35 @@ function MediaWrap() {
 
   // socket 코드 START
   useEffect(() => {
-    // 누군가 내가 있는 방에 들어올 때의 이벤트
     socket.on("welcome", async () => {
-      console.log("welcome");
-      if (!myPeerConnection) {
-        await makeConnection();
-      }
-      const offer = await myPeerConnection?.createOffer();
-      await myPeerConnection?.setLocalDescription(offer);
+      myDataChannel = myPeerConnection.createDataChannel("chat");
+      myDataChannel.addEventListener("message", (event) =>
+        console.log(event.data)
+      );
+      const offer = await myPeerConnection.createOffer();
+      myPeerConnection.setLocalDescription(offer);
       socket.emit("offer", offer, roomName);
     });
 
-    // 상대방 브라우저 이벤트
     socket.on("offer", async (offer) => {
-      console.log("offer");
-      if (!myPeerConnection) {
-        await makeConnection();
-      }
-      await myPeerConnection?.setRemoteDescription(offer);
-      const answer = await myPeerConnection?.createAnswer();
-      await myPeerConnection?.setLocalDescription(answer);
+      myPeerConnection.addEventListener("datachannel", (event) => {
+        myDataChannel = event.channel;
+        myDataChannel.addEventListener("message", (event) =>
+          console.log("myDataChannel message :", event.data)
+        );
+      });
+      myPeerConnection.setRemoteDescription(offer);
+      const answer = await myPeerConnection.createAnswer();
+      myPeerConnection.setLocalDescription(answer);
       socket.emit("answer", answer, roomName);
     });
 
-    // 내 브라우저 이벤트
-    socket.on("answer", async (answer) => {
-      console.log("answer");
-      await myPeerConnection?.setRemoteDescription(answer);
+    socket.on("answer", (answer) => {
+      myPeerConnection.setRemoteDescription(answer);
     });
 
-    // ice(Interactive Connectivity Establishment) 이벤트
-    // ice : 브라우저가 peer를 통한 연결이 가능하도록 하게 해주는 프레임워크
-    socket.on("ice", async (ice) => {
-      console.log("ice");
-      await myPeerConnection?.addIceCandidate(ice);
+    socket.on("ice", (ice) => {
+      myPeerConnection.addIceCandidate(ice);
     });
 
     return () => {
@@ -187,39 +184,36 @@ function MediaWrap() {
 
   return (
     <Wrap>
-      {!isJoin ? (
-        <FormWrap>
-          <form onSubmit={onSubmitRoom}>
-            <input value={roomName} onChange={onChangeRoomName} />
-          </form>
-          <button>입장</button>
-        </FormWrap>
-      ) : (
+      <FormWrap>
+        <form onSubmit={onSubmitRoom}>
+          <input value={roomName} onChange={onChangeRoomName} />
+        </form>
+        <button>입장</button>
+      </FormWrap>
+      <div>
         <div>
+          <div>{roomName}</div>
           <div>
-            <div>{roomName}</div>
-            <div>
-              <video ref={mediaRef} autoPlay playsInline />
-              <video ref={otherMediaRef} autoPlay playsInline />
-            </div>
-            <div>
-              <button onClick={muteClick}>{onMute ? "Unmute" : "Mute"}</button>
-              <button onClick={videoClick}>
-                {onVideo ? "Stop Video" : "Start Video"}
-              </button>
-            </div>
-            <select onChange={changeCamera}>
-              <option value="">Default Camera</option>
-              {videoInput.map((item: any) => (
-                <option key={uuidv4()} value={item.deviceId}>
-                  {item.label}
-                </option>
-              ))}
-            </select>
+            <video ref={mediaRef} autoPlay playsInline />
+            <video ref={otherMediaRef} autoPlay playsInline />
           </div>
-          <DownloadMedia mediaRef={mediaRef} />
+          <div>
+            <button onClick={muteClick}>{onMute ? "Unmute" : "Mute"}</button>
+            <button onClick={videoClick}>
+              {onVideo ? "Stop Video" : "Start Video"}
+            </button>
+          </div>
+          <select onChange={changeCamera}>
+            <option value="">Default Camera</option>
+            {videoInput.map((item: any) => (
+              <option key={uuidv4()} value={item.deviceId}>
+                {item.label}
+              </option>
+            ))}
+          </select>
         </div>
-      )}
+        <DownloadMedia mediaRef={mediaRef} />
+      </div>
     </Wrap>
   );
 }
